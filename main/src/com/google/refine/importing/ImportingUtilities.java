@@ -57,6 +57,7 @@ import java.util.Properties;
 import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
 import java.util.zip.ZipInputStream;
 
 import javax.servlet.ServletException;
@@ -67,6 +68,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
 import org.apache.commons.fileupload.FileItem;
+import org.apache.commons.fileupload.FileUploadException;
 import org.apache.commons.fileupload.ProgressListener;
 import org.apache.commons.fileupload.disk.DiskFileItemFactory;
 import org.apache.commons.fileupload.servlet.ServletFileUpload;
@@ -93,12 +95,21 @@ import com.google.refine.util.ParsingUtilities;
 
 public class ImportingUtilities {
     final static protected Logger logger = LoggerFactory.getLogger("importing-utilities");
-    
+   
+   /**
+     * interface progress method is used
+     */
+   
     static public interface Progress {
         public void setProgress(String message, int percent);
         public boolean isCanceled();
     }
-    
+   
+   /**
+     * loadDataandPrepareJob method is used to initiate the file importing process
+     * Try and catch IOE exception is used 
+     */
+   
     static public void loadDataAndPrepareJob(
         HttpServletRequest request,
         HttpServletResponse response,
@@ -136,7 +147,7 @@ public class ImportingUtilities {
             JSONUtilities.safePut(config, "state", "error");
             JSONUtilities.safePut(config, "error", "Error uploading data");
             JSONUtilities.safePut(config, "errorDetails", e.getLocalizedMessage());
-            return;
+            throw new IOException(e.getMessage());
         }
         
         ArrayNode fileSelectionIndexes = ParsingUtilities.mapper.createArrayNode();
@@ -155,7 +166,12 @@ public class ImportingUtilities {
         JSONUtilities.safePut(config, "hasData", true);
         config.remove("progress");
     }
-    
+   
+   /**
+     * Update jobwith New file selection method is used
+     * returns best ranked format files
+     */
+
     static public void updateJobWithNewFileSelection(ImportingJob job, ArrayNode fileSelectionArray) {
         job.setFileSelection(fileSelectionArray);
         
@@ -167,13 +183,19 @@ public class ImportingUtilities {
         job.setRankedFormats(rankedFormats);
     }
     
+   /**
+     * retrieveContentFromPost Request method is used
+     * Retrieve content from the file records 
+     * total progress is tracked during the retrieval process
+     */
+
     static public void retrieveContentFromPostRequest(
         HttpServletRequest request,
         Properties parameters,
         File rawDataDir,
         ObjectNode retrievalRecord,
         final Progress progress
-    ) throws Exception {
+    ) throws IOException, FileUploadException {
         ArrayNode fileRecords = ParsingUtilities.mapper.createArrayNode();
         JSONUtilities.safePut(retrievalRecord, "files", fileRecords);
         
@@ -400,7 +422,12 @@ public class ImportingUtilities {
         JSONUtilities.safePut(retrievalRecord, "clipboardCount", clipboardCount);
         JSONUtilities.safePut(retrievalRecord, "archiveCount", archiveCount);
     }
-
+   
+   /**
+     * boolean saveStream method is used and returns postprocess retrieved file
+     * total progress is tracked during the retrieval process
+     */
+   
     private static boolean saveStream(InputStream stream, URL url, File rawDataDir, final Progress progress,
             final SavingUpdate update, ObjectNode fileRecord, ArrayNode fileRecords, long length)
             throws IOException {
@@ -431,12 +458,24 @@ public class ImportingUtilities {
             calculateProgressPercent(update.totalExpectedSize, update.totalRetrievedSize));
         return postProcessRetrievedFile(rawDataDir, file, fileRecord, fileRecords, progress);
     }
-    
+   
+   /**
+     * getrelativepath method is used
+     * File path or location is retrieved 
+     * absolute path is used
+     */
+   
     static public String getRelativePath(File file, File dir) {
         String location = file.getAbsolutePath().substring(dir.getAbsolutePath().length());
         return (location.startsWith(File.separator)) ? location.substring(1) : location;
     }
     
+   /**
+     * allocate file method is used
+     * Files are allocated and normalized 
+     * throw exception is used for zip archives with files escaping root directory not allowed
+     */
+   
     static public File allocateFile(File dir, String name) {
         int q = name.indexOf('?');
         if (q > 0) {
@@ -464,17 +503,33 @@ public class ImportingUtilities {
         
         return file;
     }
-    
+   
+   /**
+     * getfile reader method is used during the import process
+     * File is read during the import process using the getfile reader method
+     * throw exception used for file not found
+     */
+   
     static public Reader getFileReader(ImportingJob job, ObjectNode fileRecord, String commonEncoding)
         throws FileNotFoundException {
         
         return getFileReader(getFile(job, JSONUtilities.getString(fileRecord, "location", "")), fileRecord, commonEncoding);
     }
-    
+   
+   /**
+     * getfile reader method is used
+     * File is read during the import process using the getfile reader method 
+     * Returns input stream, file record, and common enconding
+     */
     static public Reader getFileReader(File file, ObjectNode fileRecord, String commonEncoding) throws FileNotFoundException {
         return getReaderFromStream(new FileInputStream(file), fileRecord, commonEncoding);
     }
-    
+   
+   /**
+     * getreadfrom stream method is used to return input stream 
+     * try and catch used for unsupported encoding exception
+     */
+   
     static public Reader getReaderFromStream(InputStream inputStream, ObjectNode fileRecord, String commonEncoding) {
         String encoding = getEncoding(fileRecord);
         if (encoding == null) {
@@ -490,14 +545,26 @@ public class ImportingUtilities {
         return new InputStreamReader(inputStream);
     }
     
+   /**
+     * Getfile method is used to return job and file record location 
+     */
+   
     static public File getFile(ImportingJob job, ObjectNode fileRecord) {
         return getFile(job, JSONUtilities.getString(fileRecord, "location", ""));
     }
-    
+   
+   /**
+     * Getfile method is used to return rawdata directory location  
+     */
+   
     static public File getFile(ImportingJob job, String location) {
         return new File(job.getRawDataDir(), location);
     }
-    
+   
+   /**
+     * Getfilesource method is used to return file record and file name
+     */
+   
     static public String getFileSource(ObjectNode fileRecord) {
         return JSONUtilities.getString(
             fileRecord,
@@ -505,7 +572,11 @@ public class ImportingUtilities {
             JSONUtilities.getString(fileRecord, "fileName", "unknown")
         );
     }
-
+   
+   /**
+     * GetArchivesfileName method is used to retun file record
+     */
+  
     static public String getArchiveFileName(ObjectNode fileRecord) {
         return JSONUtilities.getString(
                 fileRecord,
@@ -513,12 +584,21 @@ public class ImportingUtilities {
                 null
         );
     }
+   
+   /**
+     * Boolean Archive filefiled method is used to return the filtered file record results
+     */
 
     static public boolean hasArchiveFileField(List<ObjectNode> fileRecords) {
         List<ObjectNode> filterResults = fileRecords.stream().filter(fileRecord -> getArchiveFileName(fileRecord) != null).collect(Collectors.toList());
         return filterResults.size() > 0;
     }
-
+   
+   /**
+     * Abstract class SavingUpdate is used
+     * expected and retrieved saving size is determined
+     */
+   
     static private abstract class SavingUpdate {
         public long totalExpectedSize = 0;
         public long totalRetrievedSize = 0;
@@ -526,7 +606,14 @@ public class ImportingUtilities {
         abstract public void savedMore();
         abstract public boolean isCanceled();
     }
-    static public long saveStreamToFile(InputStream stream, File file, SavingUpdate update) throws IOException {
+
+    /**
+      * Throws IOException when on the file size
+      * Exception is thrown when trying to import PPMD compression zip file
+      * Fixes the issue of file when PPMd zip file is imported in open refine. 
+      */
+ 
+    static private long saveStreamToFile(InputStream stream, File file, SavingUpdate update) throws IOException {
         long length = 0;
         FileOutputStream fos = new FileOutputStream(file);
         try {
@@ -542,13 +629,20 @@ public class ImportingUtilities {
                 }
             }
             return length;
+        } catch (ZipException e) {
+            throw new IOException("Compression format not supported, " + e.getMessage());
         } finally {
             fos.close();
         }
     }
-    
+   
+   /**
+     * Boolean method used for post process file been retrieved
+     * Try and catch used for archives
+     */
+   
     static public boolean postProcessRetrievedFile(
-            File rawDataDir, File file, ObjectNode fileRecord, ArrayNode fileRecords, final Progress progress) {
+            File rawDataDir, File file, ObjectNode fileRecord, ArrayNode fileRecords, final Progress progress) throws IOException {
         
         String mimeType = JSONUtilities.getString(fileRecord, "declaredMimeType", null);
         String contentEncoding = JSONUtilities.getString(fileRecord, "declaredEncoding", null);
@@ -593,7 +687,11 @@ public class ImportingUtilities {
         
         return false;
     }
-    
+   
+   /**
+     * Postprocesssingle retrieved file method used to process the file after import
+     */
+   
     static public void postProcessSingleRetrievedFile(File file, ObjectNode fileRecord) {
         if (!fileRecord.has("format")) {
             JSONUtilities.safePut(fileRecord, "format",
@@ -602,11 +700,20 @@ public class ImportingUtilities {
                     JSONUtilities.getString(fileRecord, "declaredMimeType", null)));
         }
     }
-    
+   
+   /**
+     * Tryopen as Acrhive method is used to open file as archive during import
+     */
+
     static public InputStream tryOpenAsArchive(File file, String mimeType) {
         return tryOpenAsArchive(file, mimeType, null);
     }
-    
+   
+   /**
+     * Tryopen as Acrhive method is used to open file as archive during import
+     * Try and catch is used 
+     */
+   
     static public InputStream tryOpenAsArchive(File file, String mimeType, String contentType) {
         String fileName = file.getName();
         try {
@@ -631,13 +738,17 @@ public class ImportingUtilities {
     }
     
     // FIXME: This is wasteful of space and time. We should try to process on the fly
-    static public boolean explodeArchive(
+   
+   /**
+     * Boolean method is used extracting files during import
+     */
+    static private boolean explodeArchive(
         File rawDataDir,
         InputStream archiveIS,
         ObjectNode archiveFileRecord,
         ArrayNode fileRecords,
         final Progress progress
-    ) {
+    ) throws IOException {
         if (archiveIS instanceof TarArchiveInputStream) {
             TarArchiveInputStream tis = (TarArchiveInputStream) archiveIS;
             try {
@@ -670,42 +781,46 @@ public class ImportingUtilities {
             return true;
         } else if (archiveIS instanceof ZipInputStream) {
             ZipInputStream zis = (ZipInputStream) archiveIS;
-            try {
-                ZipEntry ze;
-                while (!progress.isCanceled() && (ze = zis.getNextEntry()) != null) {
-                    if (!ze.isDirectory()) {
-                        String fileName2 = ze.getName();
-                        File file2 = allocateFile(rawDataDir, fileName2);
-                        
-                        progress.setProgress("Extracting " + fileName2, -1);
-                        
-                        ObjectNode fileRecord2 = ParsingUtilities.mapper.createObjectNode();
-                        JSONUtilities.safePut(fileRecord2, "origin", JSONUtilities.getString(archiveFileRecord, "origin", null));
-                        JSONUtilities.safePut(fileRecord2, "declaredEncoding", (String) null);
-                        JSONUtilities.safePut(fileRecord2, "declaredMimeType", (String) null);
-                        JSONUtilities.safePut(fileRecord2, "fileName", fileName2);
-                        JSONUtilities.safePut(fileRecord2, "archiveFileName", JSONUtilities.getString(archiveFileRecord, "fileName", null));
-                        JSONUtilities.safePut(fileRecord2, "location", getRelativePath(file2, rawDataDir));
+            ZipEntry ze;
+            while (!progress.isCanceled() && (ze = zis.getNextEntry()) != null) {
+                if (!ze.isDirectory()) {
+                    String fileName2 = ze.getName();
+                    File file2 = allocateFile(rawDataDir, fileName2);
 
-                        JSONUtilities.safePut(fileRecord2, "size", saveStreamToFile(zis, file2, null));
-                        postProcessSingleRetrievedFile(file2, fileRecord2);
-                        
-                        JSONUtilities.append(fileRecords, fileRecord2);
-                    }
+                    progress.setProgress("Extracting " + fileName2, -1);
+
+                    ObjectNode fileRecord2 = ParsingUtilities.mapper.createObjectNode();
+                    JSONUtilities.safePut(fileRecord2, "origin", JSONUtilities.getString(archiveFileRecord, "origin", null));
+                    JSONUtilities.safePut(fileRecord2, "declaredEncoding", (String) null);
+                    JSONUtilities.safePut(fileRecord2, "declaredMimeType", (String) null);
+                    JSONUtilities.safePut(fileRecord2, "fileName", fileName2);
+                    JSONUtilities.safePut(fileRecord2, "archiveFileName", JSONUtilities.getString(archiveFileRecord, "fileName", null));
+                    JSONUtilities.safePut(fileRecord2, "location", getRelativePath(file2, rawDataDir));
+
+                    JSONUtilities.safePut(fileRecord2, "size", saveStreamToFile(zis, file2, null));
+                    postProcessSingleRetrievedFile(file2, fileRecord2);
+
+                    JSONUtilities.append(fileRecords, fileRecord2);
                 }
-            } catch (IOException e) {
-                // TODO: what to do?
-                e.printStackTrace();
             }
             return true;
         }
         return false;
     }
-    
+   
+   /**
+     * Try open as compressedfile method is used to open file as compressed file
+     */
+   
     static public InputStream tryOpenAsCompressedFile(File file, String mimeType) {
         return tryOpenAsCompressedFile(file, mimeType, null);
     }
-    
+   
+   /**
+     * Try open as compressedfile method is used to open file as compressed file
+     * Exception is raised when compress file fails to open and shows an error
+     */
+   
     static public InputStream tryOpenAsCompressedFile(File file, String mimeType, String contentEncoding) {
         String fileName = file.getName();
         try {
@@ -729,7 +844,12 @@ public class ImportingUtilities {
         }
         return null;
     }
-    
+   
+   /**
+     * uncompressed file method is used to retrieve the raw data
+     * Throw IOexception is used
+     */
+   
     static public File uncompressFile(
         File rawDataDir,
         InputStream uncompressedIS,
@@ -755,14 +875,27 @@ public class ImportingUtilities {
         
         return file2;
     }
+   
+   
+   /**
+     * calculateprogress percent method is used and returns to total expected size
+     */
     
     static private int calculateProgressPercent(long totalExpectedSize, long totalRetrievedSize) {
         return totalExpectedSize == 0 ? -1 : (int) (totalRetrievedSize * 100 / totalExpectedSize);
     }
-    
+   
+   /**
+     * formatbyte method is used and returns number format in bytes
+     */
+   
     static private String formatBytes(long bytes) {
         return NumberFormat.getIntegerInstance().format(bytes);
     }
+   
+   /**
+     * getenconding method is used and returns encoding 
+     */
     
     static public String getEncoding(ObjectNode firstFileRecord) {
         String encoding = JSONUtilities.getString(firstFileRecord, "encoding", null);
@@ -834,7 +967,11 @@ public class ImportingUtilities {
         }
         return bestFormat;
     }
-    
+   
+   /**
+     * getCommonFormat method is used to format selected files during import
+     */
+   
     static public String getCommonFormatForSelectedFiles(ImportingJob job, ArrayNode fileSelectionIndexes) {
         ObjectNode retrievalRecord = job.getRetrievalRecord();
         
@@ -867,17 +1004,29 @@ public class ImportingUtilities {
         
         return formats.size() > 0 ? formats.get(0) : null;
     }
+   
+    /**
+     * guessBetterFormat method is used obtain the best file format during import
+     */
     
     static String guessBetterFormat(ImportingJob job, String bestFormat) {
         ObjectNode retrievalRecord = job.getRetrievalRecord();
         return retrievalRecord != null ? guessBetterFormat(job, retrievalRecord, bestFormat) : bestFormat;
     }
-    
+     
+   /**
+     * guessBetterFormat method is used obtain the best file format during import
+     */
+   
     static String guessBetterFormat(ImportingJob job, ObjectNode retrievalRecord, String bestFormat) {
         ArrayNode fileRecords = JSONUtilities.getArray(retrievalRecord, "files");
         return fileRecords != null ? guessBetterFormat(job, fileRecords, bestFormat) : bestFormat;
     }
     
+   /**
+     * guessBetterFormat method is used obtain the best file format during import
+     */
+   
     static String guessBetterFormat(ImportingJob job, ArrayNode fileRecords, String bestFormat) {
         if (bestFormat != null && fileRecords != null && fileRecords.size() > 0) {
             ObjectNode firstFileRecord = JSONUtilities.getObjectElement(fileRecords, 0);
@@ -910,7 +1059,12 @@ public class ImportingUtilities {
         }
         return bestFormat;
     }
-    
+   
+   /**
+     * rank format method is used during the import process
+     * Formats are ranked using collections.sort
+     */
+   
     static void rankFormats(ImportingJob job, final String bestFormat, ArrayNode rankedFormats) {
         final Map<String, String[]> formatToSegments = new HashMap<String, String[]>();
         
@@ -968,7 +1122,10 @@ public class ImportingUtilities {
             rankedFormats.add(format);
         }
     }
-
+   
+   /**
+     * preview parse method is used
+     */
     
     static public void previewParse(ImportingJob job, String format, ObjectNode optionObj, List<Exception> exceptions) {
         Format record = ImportingManager.formatToRecord.get(format);
@@ -992,7 +1149,12 @@ public class ImportingUtilities {
         
         job.project.update(); // update all internal models, indexes, caches, etc.
     }
-    
+   
+   /**
+     * create project method is used
+     * Final format record is determined 
+     */
+   
     static public long createProject(
             final ImportingJob job,
             final String format,
@@ -1022,6 +1184,10 @@ public class ImportingUtilities {
         }
         return project.id;
     }
+   
+   /**
+     * creatProjectSynchronously method is used format the final project
+     */
     
     static private void createProjectSynchronously(
         final ImportingJob job,
@@ -1058,7 +1224,11 @@ public class ImportingUtilities {
             job.updating = false;
         }
     }
-
+   
+   /**
+     * createProject metada method is used and returns pm
+     */
+   
     static public ProjectMetadata createProjectMetadata(ObjectNode optionObj) {
         ProjectMetadata pm = new ProjectMetadata();
         pm.setName(JSONUtilities.getString(optionObj, "projectName", "Untitled"));
