@@ -105,6 +105,9 @@ public class JsonImporter extends TreeImportingParserBase {
         return options;
     }
     
+   /**
+     * Throws IOException
+     */
     final static private JsonNode parseForPreview(JsonParser parser, PreviewParsingState state, JsonToken token)
             throws JsonParseException, IOException {
         if (token != null) {
